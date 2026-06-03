@@ -14,13 +14,13 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact_name: myapp-windows.exe
+            artifact_name: visualize-app-windows.exe
             nuitka_extra: --windows-console-mode=disable   # 可选：隐藏控制台窗口
           - os: ubuntu-22.04
-            artifact_name: myapp-linux
+            artifact_name: visualize-app-linux
             nuitka_extra: ''
           - os: macos-latest
-            artifact_name: myapp-macos
+            artifact_name: visualize-app-macos
             nuitka_extra: ''
       fail-fast: false      # 一个平台失败不影响其他平台
 
