@@ -1,0 +1,82 @@
+name: Build and Release with Nuitka
+
+on:
+  push:
+    tags:
+      - 'v*'             # 推送形如 v1.0.0 的标签时触发
+  workflow_dispatch:      # 允许手动触发
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: myapp-windows.exe
+            nuitka_extra: --windows-console-mode=disable   # 可选：隐藏控制台窗口
+          - os: ubuntu-22.04
+            artifact_name: myapp-linux
+            nuitka_extra: ''
+          - os: macos-latest
+            artifact_name: myapp-macos
+            nuitka_extra: ''
+      fail-fast: false      # 一个平台失败不影响其他平台
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'        # 根据实际项目修改
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install nuitka
+          python -c "import os; os.system('pip install -r requirements.txt') if os.path.exists('requirements.txt') else None"
+
+      - name: Build with Nuitka
+        run: |
+          python -m nuitka --standalone --onefile \
+                 --output-filename=${{ matrix.artifact_name }} \
+                 ${{ matrix.nuitka_extra }} \
+                 --assume-yes-for-downloads \
+                 main.py
+        shell: bash
+        # shell: bash 让 Windows 也使用 bash 语法，避免 PowerShell 转义问题
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}
+          # Nuitka --onefile 会在当前目录直接生成输出文件（不使用 dist/ 子目录）
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: startsWith(github.ref, 'refs/tags/')   # 仅在 tag 推送时发布
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List downloaded files (debug)
+        run: ls -R artifacts
+
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
