@@ -44,8 +44,8 @@ def render_editable_table(df: pd.DataFrame, key_prefix=""):
     """渲染可编辑的 AgGrid 表格，返回编辑后的 DataFrame 和选中的行信息"""
     gb = GridOptionsBuilder.from_dataframe(df)
     gb.configure_default_column(editable=True, resizable=True, filter=True)
-    gb.configure_selection(selection_mode="multiple", use_checkbox=True)
-    gb.configure_grid_options(domLayout='autoHeight')
+    gb.configure_selection(selection_mode="multiple", use_checkbox=True, header_checkbox=False)
+    gb.configure_grid_options()
     grid_options = gb.build()
 
     grid_response = AgGrid(
@@ -53,7 +53,6 @@ def render_editable_table(df: pd.DataFrame, key_prefix=""):
         gridOptions=grid_options,
         update_mode=GridUpdateMode.MANUAL,
         allow_unsafe_jscode=True,
-        height=400,
         fit_columns_on_grid_load=False,
         key=f"aggrid_{key_prefix}"
     )

@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
-from services.data_loader import scan_csv_files, load_csv_from_path, load_example_data
+from services.data_loader import scan_csv_files, load_csv_from_path, load_example_data, save_uploaded_file, save_example_data
 from services.data_manager import CSVDataManager
 from view.ui_components import (
     render_query_section, render_editable_table,
@@ -85,7 +85,7 @@ def sidebar_init():
                 if st.button("📄 加载此文件"):
                     df, fname, error = load_csv_from_path(selected_path)
                     if error is None:
-                        st.session_state.manager = CSVDataManager(df)
+                        st.session_state.manager = CSVDataManager(df, file_path=selected_path)
                         st.session_state.filename = fname
                         st.success(f"已加载 {fname}")
                         st.rerun()
@@ -94,23 +94,32 @@ def sidebar_init():
 
         st.markdown("---")
         st.header("其他数据源")
+
+        # 上传文件 - 自动保存到本地
         uploaded_file = st.file_uploader("上传 CSV 文件", type=["csv"])
         if uploaded_file is not None:
-            df = pd.read_csv(uploaded_file)
-            st.session_state.manager = CSVDataManager(df)
+            saved_path = save_uploaded_file(uploaded_file)
+            df = pd.read_csv(saved_path)
+            st.session_state.manager = CSVDataManager(df, file_path=saved_path)
             st.session_state.filename = uploaded_file.name
-            st.success(f"已加载 {uploaded_file.name}")
+            st.success(f"已上传并保存到 {saved_path}，修改将自动保存")
+            st.rerun()
 
+        # 示例数据 - 自动保存到本地
         if st.button("使用示例数据 (iris)"):
             df, fname = load_example_data()
-            st.session_state.manager = CSVDataManager(df)
+            saved_path = save_example_data(df, fname)
+            st.session_state.manager = CSVDataManager(df, file_path=saved_path)
             st.session_state.filename = fname
-            st.success("已加载示例数据集 iris")
+            st.success(f"已加载示例数据并保存到 {saved_path}，修改将自动保存")
+            st.rerun()
 
         st.markdown("---")
         if st.session_state.manager.is_loaded():
             st.write(f"当前文件：**{st.session_state.filename}**")
             st.write(f"数据形状：{st.session_state.manager.df.shape[0]} 行 × {st.session_state.manager.df.shape[1]} 列")
+            if st.session_state.manager.file_path:
+                st.caption(f"保存路径：`{st.session_state.manager.file_path}`")
 
 
 def main_page_init():
@@ -122,7 +131,7 @@ def main_page_init():
         filtered_df = render_query_section(df)
 
         # 可编辑表格
-        st.subheader("✏️ 数据表格（双击单元格编辑）")
+        st.subheader("✏️ 数据表格（双击单元格编辑，修改后自动保存）")
         updated_df, selected_rows = render_editable_table(filtered_df, key_prefix="main")
 
         # 处理编辑后的数据同步到 manager
@@ -131,12 +140,14 @@ def main_page_init():
             for idx in updated_df.index:
                 if idx in st.session_state.manager.df.index:
                     st.session_state.manager.df.loc[updated_df.index[idx]] = updated_df.loc[idx]
-            st.success("表格数据已更新，请记得保存")
+                    # 由于 manager 内部会在 update_dataframe 或直接修改后自动保存，这里手动调一下保存
+            st.session_state.manager.save()  # 确保保存
+            st.success("单元格修改已自动保存到文件")
 
         # 增加行
         def add_row_callback(new_row):
             st.session_state.manager.add_row(new_row)
-            st.success("新行已添加")
+            st.success("新行已添加并自动保存")
             st.rerun()
 
         render_add_row_section(df, add_row_callback)
@@ -145,8 +156,9 @@ def main_page_init():
         if st.button("🗑️ 删除勾选的行"):
             if selected_rows is not None and len(selected_rows) > 0:
                 # 获取选中行在 filtered_df 中的位置索引，然后映射到原 df 的索引
-                selected_indices = [row['_selectedRowNodeInfo']['nodeRowIndex'] for row in selected_rows if
-                                    '_selectedRowNodeInfo' in row]
+                selected_indices = [row['_selectedRowNodeInfo']['nodeRowIndex'] for row in selected_rows if '_selectedRowNodeInfo' in row]
+                st.info(f"被选中的行：{selected_rows}")
+                st.info(f"选中行在当前表格中的位置索引：{selected_indices}")
                 if selected_indices:
                     # 找到这些行在原 df 中的实际索引（因为 filtered_df 可能是 df 的子集）
                     indices_to_del = filtered_df.iloc[selected_indices].index.tolist()

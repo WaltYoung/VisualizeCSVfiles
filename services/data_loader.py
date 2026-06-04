@@ -25,3 +25,18 @@ def load_example_data():
     import plotly.express as px
     df = px.data.iris()
     return df, "iris.csv"
+
+def save_uploaded_file(uploaded_file, target_dir="uploaded"):
+    """将上传的文件保存到本地，返回保存路径"""
+    Path(target_dir).mkdir(exist_ok=True)
+    file_path = Path(target_dir) / uploaded_file.name
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    return str(file_path)
+
+def save_example_data(df, filename, target_dir="examples"):
+    """将示例数据保存到本地，返回保存路径"""
+    Path(target_dir).mkdir(exist_ok=True)
+    file_path = Path(target_dir) / filename
+    df.to_csv(file_path, index=False)
+    return str(file_path)
