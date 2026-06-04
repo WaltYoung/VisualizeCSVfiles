@@ -52,6 +52,7 @@ jobs:
         run: |
           python - << 'EOF'
           import ast
+          import os
           import sys
           from pathlib import Path
           import subprocess
