@@ -1,10 +1,10 @@
-name: Build and Release with Nuitka
+name: Build with PyInstaller
 
 on:
   push:
     tags:
-      - 'v*'             # 推送形如 v1.0.0 的标签时触发
-  workflow_dispatch:      # 允许手动触发
+      - 'v*'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -14,15 +14,18 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact_name: visualize-app-windows.exe
-            nuitka_extra: ''
+            artifact_name: app-windows.exe
+            default_console: --console
+            sep: ';'
           - os: ubuntu-22.04
-            artifact_name: visualize-app-linux
-            nuitka_extra: ''
+            artifact_name: app-linux
+            default_console: --console
+            sep: ':'
           - os: macos-latest
-            artifact_name: visualize-app-macos
-            nuitka_extra: ''
-      fail-fast: false      # 一个平台失败不影响其他平台
+            artifact_name: app-macos
+            default_console: --console
+            sep: ':'
+      fail-fast: false
 
     steps:
       - name: Checkout code
@@ -31,30 +34,132 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'        # 根据实际项目修改
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install nuitka
-          python -c "import os; os.system('pip install -r requirements.txt') if os.path.exists('requirements.txt') else None"
+          pip install pyinstaller
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Build with Nuitka
+      - name: Auto-detect PyInstaller arguments
+        id: auto_config
         run: |
-          python -m nuitka --standalone --onefile \
-                 --output-filename=${{ matrix.artifact_name }} \
-                 ${{ matrix.nuitka_extra }} \
-                 --assume-yes-for-downloads \
-                 main.py
+          python - << 'EOF'
+          import ast
+          import sys
+          from pathlib import Path
+          import subprocess
+          import json
+
+          # ---------- 1. 自动查找入口脚本 ----------
+          possible_entries = ['main.py', 'app.py', 'run.py', '__main__.py', 'cli.py', 'start.py']
+          entry = None
+          for candidate in possible_entries:
+              if Path(candidate).exists():
+                  entry = candidate
+                  break
+          if not entry:
+              # 查找任何包含 if __name__ == "__main__" 的 .py 文件
+              for py_file in Path('.').glob('*.py'):
+                  try:
+                      code = py_file.read_text(encoding='utf-8')
+                      tree = ast.parse(code)
+                      for node in ast.walk(tree):
+                          if isinstance(node, ast.If):
+                              # 简单检查 __name__ == "__main__"
+                              if (isinstance(node.test, ast.Compare) and
+                                  isinstance(node.test.left, ast.Name) and
+                                  node.test.left.id == '__name__'):
+                                  entry = str(py_file)
+                                  break
+                      if entry:
+                          break
+                  except:
+                      continue
+          if not entry:
+              print("No entry script found!")
+              sys.exit(1)
+          print(f"Detected entry point: {entry}")
+
+          # ---------- 2. 分析导入的模块 ----------
+          # 通过静态分析 + 动态检查已安装包
+          imports = set()
+          for py_file in Path('.').rglob('*.py'):
+              try:
+                  code = py_file.read_text(encoding='utf-8')
+                  tree = ast.parse(code)
+                  for node in ast.walk(tree):
+                      if isinstance(node, ast.Import):
+                          for alias in node.names:
+                              imports.add(alias.name.split('.')[0])
+                      elif isinstance(node, ast.ImportFrom):
+                          if node.module:
+                              imports.add(node.module.split('.')[0])
+              except:
+                  continue
+
+          # 额外通过 pip freeze 获取所有已安装包（用于 --collect-all 的候选）
+          result = subprocess.run([sys.executable, '-m', 'pip', 'freeze'], capture_output=True, text=True)
+          installed_pkgs = {}
+          for line in result.stdout.splitlines():
+              if '==' in line:
+                  pkg, ver = line.split('==', 1)
+                  installed_pkgs[pkg.lower()] = pkg
+
+          # 定义需要完整打包的框架（触发 --collect-all）
+          heavy_frameworks = {
+              'streamlit': 'streamlit',
+              'plotly': 'plotly',
+              'django': 'django',
+              'pyqt5': 'PyQt5',
+              'pyside6': 'PySide6',
+              'flask': 'flask',   # Flask 一般不需要完整打包，但可以加
+              'tornado': 'tornado',
+          }
+
+          collect_args = []
+          hidden_args = []
+
+          for imp in imports:
+              imp_lower = imp.lower()
+              if imp_lower in heavy_frameworks:
+                  pkg = heavy_frameworks[imp_lower]
+                  collect_args.append(f"--collect-all {pkg}")
+                  print(f"Will collect-all: {pkg}")
+              elif imp_lower in installed_pkgs:
+                  # 对于普通包，只添加 hidden-import，避免过度打包
+                  hidden_args.append(f"--hidden-import {installed_pkgs[imp_lower]}")
+                  print(f"Will hide import: {installed_pkgs[imp_lower]}")
+
+          # 去重
+          collect_args = list(set(collect_args))
+          hidden_args = list(set(hidden_args))
+
+          # 将结果写入 GITHUB_OUTPUT
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"entry={entry}\n")
+              f.write(f"collect_args={' '.join(collect_args)}\n")
+              f.write(f"hidden_args={' '.join(hidden_args)}\n")
+          EOF
         shell: bash
-        # shell: bash 让 Windows 也使用 bash 语法，避免 PowerShell 转义问题
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --onefile \
+            --name ${{ matrix.artifact_name }} \
+            --add-data "${{ steps.auto_config.outputs.entry }}${{ matrix.sep }}." \
+            ${{ steps.auto_config.outputs.hidden_args }} \
+            ${{ steps.auto_config.outputs.collect_args }} \
+            ${{ matrix.default_console }} \
+            ${{ steps.auto_config.outputs.entry }}
+        shell: bash
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_name }}
-          # Nuitka --onefile 会在当前目录直接生成输出文件（不使用 dist/ 子目录）
+          path: dist/${{ matrix.artifact_name }}
 
   release:
     name: Create GitHub Release
@@ -62,14 +167,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    if: startsWith(github.ref, 'refs/tags/')   # 仅在 tag 推送时发布
+    if: startsWith(github.ref, 'refs/tags/')
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: List downloaded files (debug)
+      - name: List downloaded files
         run: ls -R artifacts
 
       - name: Create Release and Upload Assets
