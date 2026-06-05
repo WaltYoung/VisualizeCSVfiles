@@ -180,11 +180,6 @@ def main_page_init():
         st.info("请从左侧添加目录并加载 CSV 文件，或使用上传/示例数据开始")
 
 
-def is_running_via_streamlit():
-    # 检查是否由 streamlit run 启动
-    return 'streamlit' in sys.argv[0] or sys.argv[0].endswith('streamlit')
-
-
 def main():
     session_state_init()
     sidebar_init()
@@ -192,12 +187,4 @@ def main():
 
 
 if __name__ == "__main__":
-    if not is_running_via_streamlit():
-        # 当前是直接运行 exe，改为调用 streamlit run 自身
-        script_path = os.path.abspath(__file__)
-        # 注意：需要确保 streamlit 命令在 PATH 中（打包后会包含）
-        cmd = [sys.executable, '-m', 'streamlit', 'run', script_path, '--server.headless', 'true']
-        subprocess.run(cmd)
-        sys.exit(0)
-    else:
-        main()
+    main()

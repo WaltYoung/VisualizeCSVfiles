@@ -158,7 +158,7 @@ jobs:
             ${{ steps.auto_config.outputs.hidden_args }} \
             ${{ steps.auto_config.outputs.collect_args }} \
             ${{ matrix.default_console }} \
-            ${{ steps.auto_config.outputs.entry }}
+            run_app.py
         shell: bash
 
       - name: Upload artifact
