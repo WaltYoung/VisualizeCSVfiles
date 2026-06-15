@@ -5,6 +5,33 @@ import plotly.express as px
 import io
 from utils.convert_util import convert_value_by_dtype
 
+def _resolve_selected_indices(selected_rows, source_df: pd.DataFrame) -> list:
+    """将 AgGrid 返回的选中行映射到 source_df 的索引。"""
+    if selected_rows is None or len(selected_rows) == 0:
+        return []
+    selected_df = selected_rows if isinstance(selected_rows, pd.DataFrame) else pd.DataFrame(selected_rows)
+    if selected_df.empty:
+        return []
+    if "_row_id" in selected_df.columns:
+        return selected_df["_row_id"].tolist()
+    data_cols = [c for c in source_df.columns if c in selected_df.columns]
+    if not data_cols:
+        return []
+    indices = []
+    for _, sel in selected_df.iterrows():
+        mask = pd.Series(True, index=source_df.index)
+        for col in data_cols:
+            left = source_df[col]
+            right = sel[col]
+            if pd.api.types.is_numeric_dtype(left):
+                try:
+                    right = pd.to_numeric(right)
+                except (TypeError, ValueError):
+                    pass
+            mask &= left == right
+        indices.extend(source_df[mask].index.tolist())
+    return indices
+
 def render_query_section(df: pd.DataFrame):
     """渲染查询过滤区域，返回过滤后的 DataFrame"""
     st.subheader("🔍 数据查询")
@@ -42,23 +69,34 @@ def render_query_section(df: pd.DataFrame):
 
 def render_editable_table(df: pd.DataFrame, key_prefix=""):
     """渲染可编辑的 AgGrid 表格，返回编辑后的 DataFrame 和选中的行信息"""
-    gb = GridOptionsBuilder.from_dataframe(df)
+    # 保留原始索引，便于删除时映射回 manager.df
+    display_df = df.copy()
+    display_df.insert(0, "_row_id", display_df.index)
+
+    gb = GridOptionsBuilder.from_dataframe(display_df)
     gb.configure_default_column(editable=True, resizable=True, filter=True)
+    gb.configure_column("_row_id", header_name="行号", editable=False, width=80, pinned="left")
+    gb.configure_column("::auto_unique_id::", hide=True)
     gb.configure_selection(selection_mode="multiple", use_checkbox=True, header_checkbox=False)
     gb.configure_grid_options()
     grid_options = gb.build()
 
     grid_response = AgGrid(
-        df,
+        display_df,
         gridOptions=grid_options,
-        update_mode=GridUpdateMode.MANUAL,
+        update_mode=GridUpdateMode.VALUE_CHANGED | GridUpdateMode.SELECTION_CHANGED,
         allow_unsafe_jscode=True,
         fit_columns_on_grid_load=False,
         key=f"aggrid_{key_prefix}"
     )
     updated_df = grid_response['data']
+    if "_row_id" in updated_df.columns:
+        updated_df = updated_df.drop(columns=["_row_id"])
     selected_rows = grid_response['selected_rows']
-    return updated_df, selected_rows
+    selected_indices = _resolve_selected_indices(selected_rows, df)
+    if selected_indices:
+        st.session_state[f"aggrid_selected_indices_{key_prefix}"] = selected_indices
+    return updated_df, selected_rows, selected_indices
 
 def render_add_row_section(df: pd.DataFrame, on_add_callback):
     """渲染增加新行的展开区域，回调函数接收新行字典"""

@@ -134,7 +134,7 @@ def main_page_init():
 
         # 可编辑表格
         st.subheader("✏️ 数据表格（双击单元格编辑，修改后自动保存）")
-        updated_df, selected_rows = render_editable_table(filtered_df, key_prefix="main")
+        updated_df, selected_rows, selected_indices = render_editable_table(filtered_df, key_prefix="main")
 
         # 处理编辑后的数据同步到 manager
         if not updated_df.equals(filtered_df):
@@ -156,17 +156,12 @@ def main_page_init():
 
         # 删除选中行
         if st.button("🗑️ 删除勾选的行"):
-            if selected_rows is not None and len(selected_rows) > 0:
-                # 获取选中行在 filtered_df 中的位置索引，然后映射到原 df 的索引
-                selected_indices = [row['_selectedRowNodeInfo']['nodeRowIndex'] for row in selected_rows if '_selectedRowNodeInfo' in row]
-                st.info(f"被选中的行：{selected_rows}")
-                st.info(f"选中行在当前表格中的位置索引：{selected_indices}")
-                if selected_indices:
-                    # 找到这些行在原 df 中的实际索引（因为 filtered_df 可能是 df 的子集）
-                    indices_to_del = filtered_df.iloc[selected_indices].index.tolist()
-                    st.session_state.manager.delete_rows(indices_to_del)
-                    st.success("已删除选中行")
-                    st.rerun()
+            indices_to_del = selected_indices or st.session_state.get("aggrid_selected_indices_main")
+            if indices_to_del:
+                st.session_state.manager.delete_rows(indices_to_del)
+                st.session_state.pop("aggrid_selected_indices_main", None)
+                st.success("已删除选中行")
+                st.rerun()
             else:
                 st.warning("请先在表格中勾选要删除的行")
 
